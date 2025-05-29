@@ -7822,7 +7822,7 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
 + **关键点**：
     - 使用 `ntohs()` 和 `ntohl()` 转换网络字节序。
     - IP 和 TCP 头部长度需要动态计算（`ihl` 和 `doff` 字段）。
-
+ 
 #### **6. 释放资源**
 程序结束时关闭句柄并释放资源：
 
@@ -9326,6 +9326,100 @@ void enqueue(int data) {
 
 ### 六、总结
 原子指令通过 **硬件级原子性保证** 和 **内存屏障** 实现互斥访问，是多线程编程中无锁算法的基石。理解其底层原理（如 x86 的 `CMPXCHG` 或 ARM 的 `LDREX/STREX`）有助于优化高性能并发代码，但需谨慎处理 ABA 问题和内存序挑战。对于大多数应用场景，建议优先使用标准库（如 C11 `<stdatomic.h>`）而非直接调用编译器内置函数。
+
+
+# `__sync_bool_compare_and_swap`简单使用
+`__sync_bool_compare_and_swap` 是 GCC 提供的一个原子操作内置函数，用于实现**原子比较并交换**操作。它通常用于多线程编程中，确保对共享变量的操作是原子性的，避免竞态条件。
+
+### 函数原型：
+```c
+bool __sync_bool_compare_and_swap(type *ptr, type oldval, type newval);
+```
+- **`ptr`**：指向要修改的变量的指针。
+- **`oldval`**：期望的旧值，如果 `*ptr` 等于 `oldval`，则执行交换。
+- **`newval`**：要设置的新值。
+- **返回值**：如果交换成功（即 `*ptr` 等于 `oldval`），返回 `true`；否则返回 `false`。
+
+### 功能：
+1. 比较 `*ptr` 和 `oldval`：
+   - 如果相等，则将 `*ptr` 设置为 `newval`，并返回 `true`。
+   - 如果不相等，不做任何修改，并返回 `false`。
+2. 整个操作是**原子的**，即在执行过程中不会被其他线程打断。
+
+---
+
+### 示例 1：简单的 CAS 操作
+```c
+#include <stdio.h>
+#include <stdbool.h>
+
+int main() {
+    int x = 10;
+    bool success = __sync_bool_compare_and_swap(&x, 10, 20);
+    
+    printf("x = %d, success = %d\n", x, success); // 输出: x = 20, success = 1
+    return 0;
+}
+```
+- 初始 `x = 10`，调用 `__sync_bool_compare_and_swap(&x, 10, 20)` 后：
+  - 因为 `x == 10`，所以 `x` 被设置为 `20`，并返回 `true`。
+
+---
+
+### 示例 2：多线程下的计数器
+```c
+#include <stdio.h>
+#include <pthread.h>
+
+volatile int counter = 0;
+
+void *increment(void *arg) {
+    for (int i = 0; i < 10000; i++) {
+        int old_val, new_val;
+        do {
+            old_val = counter;
+            new_val = old_val + 1;
+        } while (!__sync_bool_compare_and_swap(&counter, old_val, new_val));
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, increment, NULL);
+    pthread_create(&t2, NULL, increment, NULL);
+    
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    
+    printf("Final counter = %d\n", counter); // 应该输出 20000
+    return 0;
+}
+```
+- 两个线程并发增加 `counter`，使用 CAS 避免竞态条件。
+- `do-while` 循环确保在 `counter` 被其他线程修改时重试。
+
+---
+
+### 注意事项：
+1. **`volatile` 关键字**：确保编译器不会优化掉对共享变量的访问。
+2. **内存顺序**：`__sync_bool_compare_and_swap` 是**完全内存屏障**（full memory barrier），即操作前后的指令不会被重排序。
+3. **替代方案**：C11 标准引入了 `atomic_compare_exchange_weak` 和 `atomic_compare_exchange_strong`，建议在新代码中使用标准原子操作（`<stdatomic.h>`）。
+
+---
+
+### 失败的情况：
+```c
+int y = 30;
+bool success = __sync_bool_compare_and_swap(&y, 10, 40);
+printf("y = %d, success = %d\n", y, success); // 输出: y = 30, success = 0
+```
+- 因为 `y` 的初始值是 `30`，不等于 `10`，所以 CAS 失败，`y` 不变，返回 `false`。
+
+---
+
+### 总结：
+`__sync_bool_compare_and_swap` 是一个强大的原子操作，适用于无锁编程（lock-free programming），但要谨慎使用，避免活锁或性能问题。
 
 
 
